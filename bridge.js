@@ -1,11 +1,8 @@
 const { Endpoint, Environment, ServerNode, Logger, VendorId, StorageService } = require("@matter/main");
 const {AggregatorEndpoint} = require( "@matter/main/endpoints")
-const {DeviceCommisioner} = require("@matter/main/protocol")
-const {NetworkCommissioning} = require("@matter/main/clusters")
-const {NetworkCommissioningServer} = require("@matter/main/behaviors")
+const {DeviceCommissioner} = require("@matter/main/protocol")
 
 const os = require('os');
-var pjson = require('./package.json');
 
 const doorlock = require("./devices/doorlock").doorlock;
 const thermostat = require("./devices/thermostat").thermostat;
@@ -76,7 +73,6 @@ module.exports =  function(RED) {
         node.port = 5540
         node.passcode = genPasscode()
         node.discriminator = +Math.floor(Math.random() * 4095).toString().padStart(4, '0')
-        const networkId = new Uint8Array(32);
         node.serverReady = false;
         Environment.default.vars.set('mdns.networkInterface', node.networkInterface);
         //Storage
@@ -90,7 +86,7 @@ module.exports =  function(RED) {
             node.log(`Using Default Storage Location: ${ss.location}`)
         }
         //Servers
-        ServerNode.create(ServerNode.RootEndpoint.with(NetworkCommissioningServer.with("EthernetNetworkInterface")),{
+        ServerNode.create({
             id: node.id,
             network: {
                 port: node.port,
@@ -112,16 +108,6 @@ module.exports =  function(RED) {
                 productId: node.productId,
                 serialNumber: node.id.replace('-', ''),
                 uniqueId : node.id.replace('-', '').split("").reverse().join(""),
-                hardwareVersion: 1,
-                softwareVersion: Number(pjson.version.replaceAll('.', ''))
-            },
-            networkCommissioning: {
-                maxNetworks: 1,
-                interfaceEnabled: true,
-                lastConnectErrorValue: 0,
-                lastNetworkId: networkId,
-                lastNetworkingStatus: NetworkCommissioning.NetworkCommissioningStatus.Success,
-                networks: [{ networkId: networkId, connected: true }],
             }
         })
         .then((matterServer) =>{
@@ -244,20 +230,7 @@ module.exports =  function(RED) {
             }
         })
 
-        this.on('close', async function(removed, done) {
-            if (removed) {
-                this.log("Bridge Removed")
-                await node.matterServer.close()
-            } else {
-                this.log("Bridge Restarted")
-                node.restart = true
-                await node.matterServer.close()
-            }
-            done();
-        });
-
-        //Remove disabled nodes (and nodes on disabled tabs) from the users list so server isn't waiting for them to start.
-        RED.events.on("flows:started", function(flow) {
+        node.onFlowsStarted = function(flow) {
             let disabledflows = []
             flow.config.flows.forEach(x => {
                 if (x.type =='tab' && x.disabled){
@@ -272,7 +245,23 @@ module.exports =  function(RED) {
                     }
                 }
             })
-        })
+        }
+
+        this.on('close', async function(removed, done) {
+            RED.events.removeListener("flows:started", node.onFlowsStarted)
+            if (removed) {
+                this.log("Bridge Removed")
+                await node.matterServer.close()
+            } else {
+                this.log("Bridge Restarted")
+                node.restart = true
+                await node.matterServer.close()
+            }
+            done();
+        });
+
+        //Remove disabled nodes (and nodes on disabled tabs) from the users list so server isn't waiting for them to start.
+        RED.events.on("flows:started", node.onFlowsStarted)
     }  
 
     RED.nodes.registerType("matterbridge",MatterBridge);
@@ -298,7 +287,7 @@ module.exports =  function(RED) {
     RED.httpAdmin.get('/_matterbridge/reopencommisioning/:id', RED.auth.needsPermission('admin.write'), function(req,res){
         let target_node = RED.nodes.getNode(req.params.id)
         if (target_node){
-            let comm = target_node.matterServer.env.get(DeviceCommisioner)
+            let comm = target_node.matterServer.env.get(DeviceCommissioner)
             comm.allowBasicCommissioning().then(() => {
                 const pairingData = target_node.matterServer.state.commissioning.pairingCodes;
                 const { qrPairingCode, manualPairingCode } = pairingData;
