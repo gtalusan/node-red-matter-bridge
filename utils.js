@@ -25,4 +25,9 @@ function willUpdate(data) {
     return changed
 }
 
-module.exports = { hasProperty, isNumber, willUpdate, isBoolean };
+function drainQueue(node) {
+    const queued = node.msgQueue.splice(0);
+    queued.forEach(msg => node.emit('input', msg));
+}
+
+module.exports = { hasProperty, isNumber, willUpdate, isBoolean, drainQueue };

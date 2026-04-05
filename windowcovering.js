@@ -1,4 +1,4 @@
-const { hasProperty, willUpdate } = require('./utils');
+const { hasProperty, willUpdate, drainQueue } = require('./utils');
 const {battery} = require('./battery')
 
 
@@ -16,6 +16,8 @@ module.exports = function(RED) {
         this.log(`Loading Device node ${node.id}`)
         node.status({fill:"red",shape:"ring",text:"not running"});
         node.pending = false
+        node.msgQueue = []
+        node.isReady = false
         node.passthrough = /^true$/i.test(config.passthrough)
         node.bat = config.bat;
         node.topic = config.topic || false
@@ -30,6 +32,11 @@ module.exports = function(RED) {
         };
 
         this.on('input', function(msg) {
+            if (!node.isReady) {
+                node.msgQueue.push(msg);
+                node.status({fill:"yellow",shape:"ring",text:`queued (${node.msgQueue.length})`});
+                return;
+            }
             this.log(msg.payload)
             switch (msg.topic) {
                 case 'state':
@@ -97,7 +104,9 @@ module.exports = function(RED) {
             if (node.tilt == 'lift'){
                 node.device.events.windowCovering.liftMovement.on(node.liftMovementEvt)
             }
-            node.status({fill:"green",shape:"dot",text:"ready"});    
+            node.isReady = true;
+            drainQueue(node);
+            node.status({fill:"green",shape:"dot",text:"ready"});
         })
         
 
@@ -188,6 +197,8 @@ module.exports = function(RED) {
 
         this.on('close', async function(removed, done) {
             let node = this
+            node.msgQueue = []
+            node.isReady = false
             let rtype = removed ? 'Device was removed/disabled' : 'Device was restarted'
             node.log(`Closing device: ${this.id}, ${rtype}`)
             //Remove Matter.js Events

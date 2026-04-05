@@ -1,4 +1,4 @@
-const { hasProperty, willUpdate } = require('./utils');
+const { hasProperty, willUpdate, drainQueue } = require('./utils');
 const {battery} = require('./battery')
 
 
@@ -11,6 +11,8 @@ module.exports = function(RED) {
         node.levelstep = Number(config.levelstep)
         node.pending = false
         node.pendingmsg = null
+        node.msgQueue = []
+        node.isReady = false
         node.passthrough = /^true$/i.test(config.passthrough)
         node.bat = config.bat    
         node.topic = config.topic || false    
@@ -58,6 +60,11 @@ module.exports = function(RED) {
 
 
         this.on('input', function(msg) {
+            if (!node.isReady) {
+                node.msgQueue.push(msg);
+                node.status({fill:"yellow",shape:"ring",text:`queued (${node.msgQueue.length})`});
+                return;
+            }
             switch (msg.topic) {
                 case 'state':
                      if (hasProperty(msg, 'payload')) {
@@ -132,11 +139,15 @@ module.exports = function(RED) {
         node.device.events.fanControl.rockSetting$Changed.on(node.stateEvt)
         node.device.events.identify.startIdentifying.on(node.identifyEvt)
         node.device.events.identify.stopIdentifying.on(node.identifyEvt)
-        node.status({fill:"green",shape:"dot",text:"ready"});    
+        node.isReady = true;
+        drainQueue(node);
+        node.status({fill:"green",shape:"dot",text:"ready"});
         })
 
 	    this.on('close', async function(removed, done) {
             let node = this
+            node.msgQueue = []
+            node.isReady = false
             let rtype = removed ? 'Device was removed/disabled' : 'Device was restarted'
             node.log(`Closing device: ${this.id}, ${rtype}`)
             //Remove Matter.js  Events
